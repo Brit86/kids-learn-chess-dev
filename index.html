@@ -194,6 +194,33 @@
       .movestrip .ms-row.mate{ background:#FFE9A8; border-radius:8px; padding:4px 6px; margin-top:4px; font-weight:700; }
       .movestrip .ms-tag{ color:#B25E00; margin-left:6px; }
 
+      /* ---------- compact theory stages (mean / why) ---------- */
+      /* The meaning stage was 1093px tall on an iPad: bubble + a 500px
+         board + the move strip pushed the only way forward ("Got it!")
+         297px below the fold at 1024x768 (245px at 1180x820, 164px on a
+         phone), so a real player never reached the why stage. Compact
+         stages use a 300px board, put the move strip beside the board on
+         wide screens (below the buttons on narrow ones), and the button
+         says where it goes. */
+      .stage.compact{ display:flex; flex-direction:column; align-items:center; }
+      .stage.compact .bubble{ order:1; }
+      .stage.compact .board-wrap{ order:2; margin-top:8px; }
+      .stage.compact .cta-row{ order:3; margin-top:12px; }
+      .stage.compact .movestrip{ order:4; margin:12px 0 0; font-size:1rem; line-height:1.45; }
+      .stage.compact .dots{ order:5; }
+      .stage.compact .board-frame{ width:min(94vw, 300px); }
+      @media (min-width:640px){
+        .stage.compact{ display:grid; grid-template-columns:auto auto; justify-content:center; align-items:center; column-gap:16px; }
+        .stage.compact .bubble{ grid-column:1 / -1; grid-row:1; }
+        .stage.compact .board-wrap{ grid-column:1; grid-row:2; margin-top:0; }
+        .stage.compact .movestrip{ grid-column:2; grid-row:2; margin:0; max-width:360px; }
+        .stage.compact .cta-row{ grid-column:1 / -1; grid-row:3; }
+        .stage.compact .dots{ grid-column:1 / -1; grid-row:4; }
+      }
+      @media (max-width:560px){
+        .stage.compact .cta{ font-size:1.05rem; padding:12px 20px; min-height:56px; }
+      }
+
       /* ---------- board ---------- */
       .board-wrap{ display:flex; flex-direction:column; align-items:center; gap:10px; }
       .board-frame{
@@ -1467,6 +1494,10 @@
     function setThBubble(txt){ var b = $("#thBubble"); if(b) b.textContent = txt; }
     function renderTheoryLesson(){
       var body = $("#theoryBody");
+      /* Every stage change starts at the top of the page: a player who
+         scrolled during play must not land mid-stage with the way
+         forward below the fold. */
+      window.scrollTo(0,0);
       if(theory.stage === "meet"){
         body.innerHTML =
           '<div class="stage">'
@@ -1501,13 +1532,13 @@
            The board stays up with the bishop's diagonal glowing, the
            queen on f7 at its end, and the black king pulsing in check. */
         body.innerHTML =
-          '<div class="stage">'
+          '<div class="stage compact">'
           + '<div class="bubble small" id="thBubble" style="margin-top:0;"></div>'
-          + '<div class="board-wrap" style="margin-top:12px;"><div class="board-frame"><div class="board" id="thBoard"></div></div></div>'
+          + '<div class="board-wrap"><div class="board-frame"><div class="board" id="thBoard"></div></div></div>'
           + moveStripHTML()
           + '<div class="cta-row">'
           +   '<button class="cta pink" id="thTalk" type="button">Talk</button>'
-          +   '<button class="cta go" id="thGotIt" type="button">Got it!</button>'
+          +   '<button class="cta go" id="thGotIt" type="button">Got it! Why is it checkmate?</button>'
           + '</div>' + dotsHTML(1) + '</div>';
         var bub = $("#thBubble");
         bub.textContent = THEORY_LINES.mean[theory.meanLine];
@@ -1534,12 +1565,12 @@
            bishop's diagonal glowing, the queen on f7 at its end, and the
            black king pulsing in check. */
         body.innerHTML =
-          '<div class="stage">'
+          '<div class="stage compact">'
           + '<div class="bubble small" id="thBubble" style="margin-top:0;"></div>'
-          + '<div class="board-wrap" style="margin-top:12px;"><div class="board-frame"><div class="board" id="thBoard"></div></div></div>'
+          + '<div class="board-wrap"><div class="board-frame"><div class="board" id="thBoard"></div></div></div>'
           + '<div class="cta-row">'
           +   '<button class="cta pink" id="thTalk" type="button">Talk</button>'
-          +   '<button class="cta go" id="thGotIt" type="button">Got it!</button>'
+          +   '<button class="cta go" id="thGotIt" type="button">Got it! Let\'s defend it!</button>'
           + '</div>' + dotsHTML(1) + '</div>';
         var bub = $("#thBubble");
         bub.textContent = THEORY_LINES.why[theory.whyLine];
