@@ -670,6 +670,7 @@
     }
     function speak(text, who){
       if(!soundOn) return;
+      cancelPartyVoice();
       stopVoice();
       var src = (who && AUDIO[who + "|" + text]) || AUDIO[text];
       if(src){
@@ -869,6 +870,18 @@
       }
     }
     var partyCb = null, partyCb2 = null;
+    /* The fanfare and the party voice used to start at the same instant:
+       the fanfare peaks at ~0.44 while the voice clips peak at ~0.84, so
+       together they clipped and sounded distorted. The fanfare plays first
+       and the voice starts once it has finished (its last tone ends at
+       0.55s + 0.4s = 0.95s, so the voice waits 1000ms). */
+    var partyVoiceTimer = null;
+    function cancelPartyVoice(){ if(partyVoiceTimer){ clearTimeout(partyVoiceTimer); partyVoiceTimer = null; } }
+    function speakAfterFanfare(text){
+      cancelPartyVoice();
+      sndFanfare();
+      partyVoiceTimer = setTimeout(function(){ partyVoiceTimer = null; speak(text); }, 1000);
+    }
     function party(title, text, charType, btnLabel, cb, btn2Label, cb2){
       $("#partyTitle").textContent = title;
       $("#partyText").textContent = text;
@@ -879,11 +892,11 @@
       if(btn2Label){ b2.style.display = ""; b2.textContent = btn2Label; partyCb2 = cb2 || null; }
       else { b2.style.display = "none"; partyCb2 = null; }
       $("#overlay").classList.add("on");
-      confetti(54); sndFanfare(); speak(title + " " + text);
+      confetti(54); speakAfterFanfare(title + " " + text);
     }
-    function closeParty(){ $("#overlay").classList.remove("on"); }
-    $("#partyBtn").addEventListener("click", function(){ sndTap(); closeParty(); if(partyCb) partyCb(); });
-    $("#partyBtn2").addEventListener("click", function(){ sndTap(); closeParty(); if(partyCb2) partyCb2(); });
+    function closeParty(){ cancelPartyVoice(); $("#overlay").classList.remove("on"); }
+    $("#partyBtn").addEventListener("click", function(){ sndTap(); cancelPartyVoice(); closeParty(); if(partyCb) partyCb(); });
+    $("#partyBtn2").addEventListener("click", function(){ sndTap(); cancelPartyVoice(); closeParty(); if(partyCb2) partyCb2(); });
 
     /* ================= navigation ================= */
     function show(id){
@@ -1878,8 +1891,9 @@
            carries on — a little celebration, no ending. */
         game.justPromoted = true;
         setGameBubble("Wow! A new Queen!");
-        speak("Wow! A new Queen!");
-        confetti(24); sndFanfare();
+        /* Same fanfare/voice overlap as the party: the fanfare plays first
+           and the voice follows once it has finished. */
+        confetti(24); speakAfterFanfare("Wow! A new Queen!");
         renderGame();
       }
       game.turn = game.turn === "sun" ? "berry" : "sun";
