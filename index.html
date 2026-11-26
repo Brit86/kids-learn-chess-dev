@@ -1,4 +1,5 @@
 <!doctype html>
+<!-- Audio rules: ~/workspace/your_files/game-audio-rules.md — never start a sound while another is still sounding; measure clip peaks (keep < 0.9); cancel pending speech on exit. -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -498,6 +499,7 @@
         return AC;
       }catch(e){ return null; }
     }
+    var activeTones = [];
     function tone(freq, delay, dur, type, vol, slideTo){
       var ctx = ac(); if(!ctx) return;
       var t = ctx.currentTime + (delay||0);
@@ -510,6 +512,17 @@
       g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
       o.connect(g); g.connect(ctx.destination);
       o.start(t); o.stop(t + dur + 0.05);
+      activeTones = activeTones.filter(function(x){ return x.end > ctx.currentTime; });
+      activeTones.push({o:o, end:t + dur + 0.05});
+    }
+    /* Stop every scheduled tone. Used when a party is dismissed early so its
+       fanfare does not keep playing over the next screen (audio rule 1). */
+    function stopAllTones(){
+      if(!activeTones.length) return;
+      var ctx = ac(); if(!ctx){ activeTones = []; return; }
+      var now = ctx.currentTime;
+      activeTones.forEach(function(x){ if(x.end > now){ try{ x.o.stop(); }catch(e){} } });
+      activeTones = [];
     }
     function sndTap(){ tone(520, 0, 0.09, "sine", 0.12, 760); }
     function sndMove(){ tone(440, 0, 0.1, "triangle", 0.16); tone(660, 0.08, 0.12, "triangle", 0.16); }
@@ -670,7 +683,7 @@
     }
     function speak(text, who){
       if(!soundOn) return;
-      cancelPartyVoice();
+      cancelPendingVoice();
       stopVoice();
       var src = (who && AUDIO[who + "|" + text]) || AUDIO[text];
       if(src){
@@ -875,14 +888,34 @@
        together they clipped and sounded distorted. The fanfare plays first
        and the voice starts once it has finished (its last tone ends at
        0.55s + 0.4s = 0.95s, so the voice waits 1000ms). */
-    var partyVoiceTimer = null;
-    function cancelPartyVoice(){ if(partyVoiceTimer){ clearTimeout(partyVoiceTimer); partyVoiceTimer = null; } }
-    function speakAfterFanfare(text){
-      cancelPartyVoice();
-      sndFanfare();
-      partyVoiceTimer = setTimeout(function(){ partyVoiceTimer = null; speak(text); }, 1000);
+    /* AUDIO RULES (see ~/workspace/your_files/game-audio-rules.md):
+       a voice line never starts while another sound is still sounding.
+       Sounds are sequenced, never stacked: an SFX plays first, then the
+       voice follows once it has finished, on ONE shared cancellable
+       timer (pendingVoice). Any new speech, screen change or party
+       dismiss cancels the pending voice, so a delayed line can never
+       talk over the next screen. */
+    var pendingVoice = null;
+    function cancelPendingVoice(){ if(pendingVoice){ clearTimeout(pendingVoice); pendingVoice = null; } }
+    /* Speak text once ms have passed (after an SFX has finished). who is
+       the character key for lines that have a per-character recording. */
+    function speakLater(text, ms, who){
+      cancelPendingVoice();
+      pendingVoice = setTimeout(function(){ pendingVoice = null; speak(text, who); }, ms);
     }
-    function party(title, text, charType, btnLabel, cb, btn2Label, cb2){
+    /* Fanfare first, voice once it has finished (last tone ends 0.95s).
+       delayMs (optional) waits that long before the fanfare itself, so a
+       move/capture sound that has just played can finish first. */
+    function speakAfterFanfare(text, delayMs){
+      cancelPendingVoice();
+      if(delayMs){
+        pendingVoice = setTimeout(function(){ pendingVoice = null; speakAfterFanfare(text); }, delayMs);
+        return;
+      }
+      sndFanfare();
+      pendingVoice = setTimeout(function(){ pendingVoice = null; speak(text); }, 1000);
+    }
+    function party(title, text, charType, btnLabel, cb, btn2Label, cb2, delayMs){
       $("#partyTitle").textContent = title;
       $("#partyText").textContent = text;
       $("#partyChar").innerHTML = charType ? '<div class="mini-char" style="margin:0 auto;">'+pieceSVG(charType,"sun")+'</div>' : "";
@@ -892,14 +925,22 @@
       if(btn2Label){ b2.style.display = ""; b2.textContent = btn2Label; partyCb2 = cb2 || null; }
       else { b2.style.display = "none"; partyCb2 = null; }
       $("#overlay").classList.add("on");
-      confetti(54); speakAfterFanfare(title + " " + text);
+      /* A celebration never talks over a line that is still playing. */
+      stopVoice();
+      if(delayMs){
+        cancelPendingVoice();
+        pendingVoice = setTimeout(function(){ pendingVoice = null; confetti(54); speakAfterFanfare(title + " " + text); }, delayMs);
+      } else {
+        confetti(54); speakAfterFanfare(title + " " + text);
+      }
     }
-    function closeParty(){ cancelPartyVoice(); $("#overlay").classList.remove("on"); }
-    $("#partyBtn").addEventListener("click", function(){ sndTap(); cancelPartyVoice(); closeParty(); if(partyCb) partyCb(); });
-    $("#partyBtn2").addEventListener("click", function(){ sndTap(); cancelPartyVoice(); closeParty(); if(partyCb2) partyCb2(); });
+    function closeParty(){ cancelPendingVoice(); stopAllTones(); $("#overlay").classList.remove("on"); }
+    $("#partyBtn").addEventListener("click", function(){ cancelPendingVoice(); closeParty(); sndTap(); if(partyCb) partyCb(); });
+    $("#partyBtn2").addEventListener("click", function(){ cancelPendingVoice(); closeParty(); sndTap(); if(partyCb2) partyCb2(); });
 
     /* ================= navigation ================= */
     function show(id){
+      cancelPendingVoice();
       $$(".screen").forEach(function(s){ s.classList.remove("on"); });
       $("#"+id).classList.add("on");
       window.scrollTo(0,0);
@@ -916,7 +957,7 @@
       $("#soundLabel").textContent = soundOn ? "Sound" : "Off";
       $("#soundBtn").setAttribute("aria-label", soundOn ? "Turn sound off" : "Turn sound on");
       $("#soundBtn").style.opacity = soundOn ? "1" : ".55";
-      if(!soundOn) stopVoice();
+      if(!soundOn){ stopVoice(); cancelPendingVoice(); stopAllTones(); }
       if(soundOn) sndTap();
     });
     var resetArmed = false, resetTimer = null;
@@ -931,6 +972,7 @@
       clearTimeout(resetTimer);
       resetArmed = false;
       stopVoice();
+      cancelPendingVoice();
       try{ localStorage.removeItem(SAVE_KEY); }catch(e){}
       progress = { stars:{pawn:false,rook:false,knight:false,bishop:false,queen:false,king:false}, tryDone:{pawn:false,rook:false,knight:false,bishop:false,queen:false,king:false}, firstGame:false, dadGame:false, theory:{play:false,defend:false} };
       refreshStarCount();
@@ -1122,7 +1164,7 @@
       $$("#pathList .friend-card").forEach(function(card){
         card.addEventListener("click", function(){
           var t = card.getAttribute("data-piece");
-          if(!isUnlocked(t)){ sndBoing(); speak("Say hi to your other friend first!"); return; }
+          if(!isUnlocked(t)){ sndBoing(); speakLater("Say hi to your other friend first!", 270); return; }
           sndTap(); openLesson(t);
         });
       });
@@ -1192,10 +1234,11 @@
         function nextLine(){
           lesson.line = (lesson.line + 1) % ch.lines.length;
           bub.textContent = ch.lines[lesson.line];
-          speak(ch.lines[lesson.line], t);
+          stopVoice();
+          sndGiggle();
+          speakLater(ch.lines[lesson.line], 290, t);
           var c = $("#meetChar");
           c.classList.remove("bounce"); void c.offsetWidth; c.classList.add("bounce");
-          sndGiggle();
         }
         $("#meetChar").addEventListener("click", nextLine);
         $("#meetTalk").addEventListener("click", nextLine);
@@ -1218,8 +1261,8 @@
           var g = $("#tryGame"); g.style.display = "";
           $("#tryDone").style.display = "none";
           $("#tryBubble").textContent = "Yay! Now try the game!";
-          speak("Yay! Now try the game!");
           confetti(22); sndPop();
+          speakLater("Yay! Now try the game!", 170);
         });
         $("#tryGame").addEventListener("click", function(){ sndTap(); lesson.stage = "challenge"; setupChallenge(); renderLesson(); });
       }
@@ -1283,7 +1326,7 @@
         tryView.cookies.delete(i);
         tryView.pos = i; tryView.selected = null; tryView.targets = [];
         tryMoves++;
-        if(hadCookie){ sndCapture(); $("#tryBubble").textContent = "Yum! You got a cookie!"; speak("Yum! You got a cookie!"); }
+        if(hadCookie){ sndCapture(); $("#tryBubble").textContent = "Yum! You got a cookie!"; speakLater("Yum! You got a cookie!", 330); }
         else sndMove();
         if(tryMoves >= 1){
           var d = $("#tryDone");
@@ -1371,19 +1414,24 @@
           var nr = chView.rival + 8;
           chView.board = plainMove(chView.board, chView.rival, nr);
           chView.rival = nr;
-          setChBubble("Sam hops one. Your turn!");
-          speak("Sam hops one. Your turn!");
+          stopVoice();
           sndMove();
           if(rc(nr)[0] === 7){
+            /* Sam won: no "Your turn!" line (the game is over) — the
+               party says it instead, and its fanfare waits for the
+               hop sound to finish. */
             chView.over = true;
             renderBoard($("#chBoard"), chView);
-            party("So close!", "Sam got there first. Try again — you can do it!", "pawn", "Try Again", function(){ setupChallenge(); renderLesson(); }, "Friends", function(){ renderPath(); show("scr-learn"); });
+            party("So close!", "Sam got there first. Try again — you can do it!", "pawn", "Try Again", function(){ setupChallenge(); renderLesson(); }, "Friends", function(){ renderPath(); show("scr-learn"); }, 250);
             return;
           }
+          setChBubble("Sam hops one. Your turn!");
+          speakLater("Sam hops one. Your turn!", 250);
         } else {
           setChBubble("Sam is asleep. Zzz… Your turn!");
-          speak("Sam is asleep. Zzz… Your turn!");
+          stopVoice();
           sndGiggle();
+          speakLater("Sam is asleep. Zzz… Your turn!", 290);
         }
         chView.busy = false;
         renderBoard($("#chBoard"), chView);
@@ -1397,26 +1445,31 @@
         chView.cookies.delete(to); chView.left--;
         sndCapture();
         setChBubble(chView.left > 0 ? "Yum! " + chView.left + " to go!" : "Yum yum yum!");
-        speak("Yum!");
+        speakLater("Yum!", 330);
       } else sndMove();
       renderBoard($("#chBoard"), chView);
       updateCookieLeft();
-      if(chView.left <= 0) winChallenge("All the cookies!", CHARS[lesson.type].name + " is so happy!");
+      if(chView.left <= 0) winChallenge("All the cookies!", CHARS[lesson.type].name + " is so happy!", 1560);
     }
-    function winChallenge(title, text){
+    /* delayMs: how long to wait before the star party. The cookie win
+       passes 1560ms so the "Yum!" line (spoken 330ms after the capture,
+       1.13s long) has finished before the fanfare starts. */
+    function winChallenge(title, text, delayMs){
       chView.over = true;
       var t = lesson.type, first = !progress.stars[t];
       progress.stars[t] = true; saveProgress(); refreshStarCount();
       var nextIdx = ORDER.indexOf(t) + 1;
       var next = nextIdx < ORDER.length ? ORDER[nextIdx] : null;
+      var cv = chView;
       setTimeout(function(){
+        if(!lesson || lesson.stage !== "challenge" || !chView || chView !== cv || !chView.over) return;
         party(first ? "You got a star!" : title, text, t, next ? "Meet " + CHARS[next].name + "!" : "See Trophies",
           function(){
             if(next) openLesson(next);
             else { renderTrophies(); show("scr-trophies"); }
           },
           "Friends", function(){ renderPath(); show("scr-learn"); });
-      }, 450);
+      }, delayMs || 450);
     }
 
     /* ================= game theory ================= */
@@ -1483,7 +1536,7 @@
       $$("#theoryList .friend-card").forEach(function(card){
         card.addEventListener("click", function(){
           var id = card.getAttribute("data-theory");
-          if(id !== "scholars"){ sndBoing(); speak(THEORY_LINES.soon); return; }
+          if(id !== "scholars"){ sndBoing(); speakLater(THEORY_LINES.soon, 270); return; }
           sndTap(); openTheoryLesson();
         });
       });
@@ -1528,10 +1581,11 @@
         function nextLine(){
           theory.line = (theory.line + 1) % THEORY_LINES.intro.length;
           bub.textContent = THEORY_LINES.intro[theory.line];
-          speak(THEORY_LINES.intro[theory.line]);
+          stopVoice();
+          sndGiggle();
+          speakLater(THEORY_LINES.intro[theory.line], 290);
           var c = $("#thChar");
           c.classList.remove("bounce"); void c.offsetWidth; c.classList.add("bounce");
-          sndGiggle();
         }
         $("#thChar").addEventListener("click", nextLine);
         $("#thTalk").addEventListener("click", nextLine);
@@ -1560,8 +1614,9 @@
         function nextMean(){
           theory.meanLine = (theory.meanLine + 1) % THEORY_LINES.mean.length;
           bub.textContent = THEORY_LINES.mean[theory.meanLine];
-          speak(THEORY_LINES.mean[theory.meanLine]);
+          stopVoice();
           sndGiggle();
+          speakLater(THEORY_LINES.mean[theory.meanLine], 290);
         }
         $("#thTalk").addEventListener("click", nextMean);
         $("#thGotIt").addEventListener("click", function(){
@@ -1592,8 +1647,9 @@
         function nextWhy(){
           theory.whyLine = (theory.whyLine + 1) % THEORY_LINES.why.length;
           bub.textContent = THEORY_LINES.why[theory.whyLine];
-          speak(THEORY_LINES.why[theory.whyLine]);
+          stopVoice();
           sndGiggle();
+          speakLater(THEORY_LINES.why[theory.whyLine], 290);
         }
         $("#thTalk").addEventListener("click", nextWhy);
         $("#thGotIt").addEventListener("click", function(){
@@ -1687,7 +1743,7 @@
             wiggleSquare(el, i);
             sndBoing();
             setThBubble(THEORY_LINES.step[theory.step]);
-            speak(THEORY_LINES.step[theory.step]);
+            speakLater(THEORY_LINES.step[theory.step], 270);
           } else {
             wiggleSquare(el, i);
             sndBoing();
@@ -1711,7 +1767,7 @@
             wiggleSquare(el, i);
             sndBoing();
             setThBubble(THEORY_LINES.defHint);
-            speak(THEORY_LINES.defHint);
+            speakLater(THEORY_LINES.defHint, 270);
           }
           renderBoard(el, v);
           return;
@@ -1767,10 +1823,11 @@
         v.board = applyMove(v.board, reply.from, reply.to);
         v.lastFrom = reply.from; v.lastTo = reply.to;
         v.glow = [SCHOLARS_WHITE[theory.step].from];
+        stopVoice();
         sndMove();
         renderBoard($("#thBoard"), v);
         setThBubble(THEORY_LINES.step[theory.step]);
-        speak(THEORY_LINES.step[theory.step]);
+        speakLater(THEORY_LINES.step[theory.step], 250);
         theory.busy = false;
       }, 800);
     }
@@ -1783,14 +1840,15 @@
       renderBoard(el, v);
       theory.over = true;
       setThBubble(THEORY_LINES.defWin);
-      speak(THEORY_LINES.defWin);
+      speakLater(THEORY_LINES.defWin, 250);
       var v0 = v;
       setTimeout(function(){
         if(!theory || theory.view !== v0 || theory.stage !== "defend") return;
         /* The queen has to run away! */
         v.board = applyMove(v.board, idx(3,7), idx(5,5));
         v.lastFrom = idx(3,7); v.lastTo = idx(5,5);
-        sndMove();
+        /* No move sound here: Pip's "She has to run away!" line is still
+           playing, and the queen's run is the visual that goes with it. */
         renderBoard($("#thBoard"), v);
         progress.theory.defend = true; saveProgress(); refreshStarCount();
         setTimeout(function(){
@@ -1798,7 +1856,7 @@
           party("You stopped it!", "The queen ran away!", "pawn",
             "Play Again", function(){ theory.stage = "play"; setupTheoryPlay(); renderTheoryLesson(); },
             "Theory", function(){ theory = null; renderTheory(); show("scr-theory"); });
-        }, 600);
+        }, 2380);
       }, 900);
     }
 
@@ -1891,9 +1949,9 @@
            carries on — a little celebration, no ending. */
         game.justPromoted = true;
         setGameBubble("Wow! A new Queen!");
-        /* Same fanfare/voice overlap as the party: the fanfare plays first
-           and the voice follows once it has finished. */
-        confetti(24); speakAfterFanfare("Wow! A new Queen!");
+        /* The move sound has just played: the fanfare waits until it has
+           finished, then the voice follows once the fanfare has finished. */
+        confetti(24); speakAfterFanfare("Wow! A new Queen!", captured ? 330 : 250);
         renderGame();
       }
       game.turn = game.turn === "sun" ? "berry" : "sun";
@@ -1912,22 +1970,22 @@
         if(game.mode === "cpu"){
           progress.firstGame = true;
           if(inCheck && winner === "sun"){
-            party("You did it!", "You won the big game! Wow!", "queen", "Play Again", function(){ startGame("cpu"); }, "Home", goHome);
+            party("You did it!", "You won the big game! Wow!", "queen", "Play Again", function(){ startGame("cpu"); }, "Home", goHome, 300);
           } else if(inCheck){
-            party("Great game!", "Berry won this time. You played so well! Play again?", "king", "Play Again", function(){ startGame("cpu"); }, "Home", goHome);
+            party("Great game!", "Berry won this time. You played so well! Play again?", "king", "Play Again", function(){ startGame("cpu"); }, "Home", goHome, 300);
           } else {
-            party("Great game!", "Nobody can move. It's a tie! Well played!", "king", "Play Again", function(){ startGame("cpu"); }, "Home", goHome);
+            party("Great game!", "Nobody can move. It's a tie! Well played!", "king", "Play Again", function(){ startGame("cpu"); }, "Home", goHome, 300);
           }
         } else {
           progress.dadGame = true;
-          party("Great game!", inCheck ? "Checkmate! What a game! Play again?" : "Nobody can move. It's a tie!", "king", "Play Again", function(){ startGame("2p"); }, "Home", goHome);
+          party("Great game!", inCheck ? "Checkmate! What a game! Play again?" : "Nobody can move. It's a tie!", "king", "Play Again", function(){ startGame("2p"); }, "Home", goHome, 300);
         }
         saveProgress(); refreshStarCount();
         return;
       }
       if(!game.justPromoted){
         if(inCheck){
-          if(game.mode === "cpu" && side === "sun"){ setGameBubble("Uh oh! Keep King Leo safe!"); speak("Keep King Leo safe!"); }
+          if(game.mode === "cpu" && side === "sun"){ setGameBubble("Uh oh! Keep King Leo safe!"); speakLater("Keep King Leo safe!", 330); }
           else setGameBubble("The King needs help!");
         } else if(game.mode === "cpu" && side === "sun"){
           setGameBubble("Your turn! Tap a piece.");
@@ -1936,7 +1994,11 @@
       if(game.mode === "cpu" && side === "berry" && !game.over){
         game.busy = true;
         if(!game.justPromoted) setGameBubble("Berry is thinking…");
-        setTimeout(cpuMove, 800);
+        /* After a promotion the celebration (fanfare + "Wow! A new
+           Queen!") is still playing: Berry waits until it has finished
+           (fanfare at +250ms, voice at +1250ms, 2.09s long) instead of
+           moving over it. */
+        setTimeout(cpuMove, game.justPromoted ? 3600 : 800);
       }
     }
     var PIECE_VAL = { pawn:1, knight:3, bishop:3, rook:5, queen:9, king:0 };
@@ -1996,6 +2058,9 @@
         pick = pool[Math.floor(Math.random() * pool.length)];
       }
       if(!pick) pick = moves[0];
+      /* Berry's reply is the game's own timer: cut any line still playing
+         before its move sound, so the reply never sounds over Pip. */
+      stopVoice();
       doGameMove(pick.from, pick.to);
     }
     $("#hintBtn").addEventListener("click", function(){
@@ -2015,8 +2080,8 @@
       game.hintFrom = best.from; game.hintTo = best.to;
       game.selected = null; game.targets = [];
       setGameBubble("Try this move! Tap the green piece.");
-      speak("Try this move!");
       sndPop();
+      speakLater("Try this move!", 170);
       renderGame();
     });
 
