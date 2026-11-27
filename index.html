@@ -382,6 +382,7 @@
         <p class="grownups">For grown-ups: one file, works with no wifi. Pawns turn into queens at the far end. No castling yet — that comes later.</p>
         <p class="grownups">Grown-ups: the friends' voices are pre-recorded Scottish, built into the file — no downloads or settings needed.</p>
         <button class="reset-btn" id="resetBtn" type="button">Clear saved progress</button>
+        <p class="grownups" id="versionTag"></p>
       </section>
 
       <!-- LEARN PATH -->
@@ -817,6 +818,9 @@
     };
 
     /* ================= progress (saved on this device) ================= */
+    /* Build version (semantic versioning — see the production README).
+       Dev builds carry the next version with a -dev suffix. */
+    var VERSION = "1.2.0-dev";
     var SAVE_KEY = "kids-learn-chess-dev-progress-v1";
     var progress = {
       stars: { pawn:false, rook:false, knight:false, bishop:false, queen:false, king:false },
@@ -2093,6 +2097,7 @@
 
     /* ================= go ================= */
     refreshStarCount();
+    var vt = document.getElementById("versionTag"); if(vt) vt.textContent = "Version " + VERSION;
     show("scr-home");
     </script>
   </body>
