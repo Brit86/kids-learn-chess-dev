@@ -1950,6 +1950,10 @@
         /* A pawn that reaches the far end becomes a queen and the game
            carries on — a little celebration, no ending. */
         game.justPromoted = true;
+        /* One-shot flag: the queen keeps this piece object for the rest
+           of the game, so clear it now or she celebrates again on every
+           move she makes. */
+        landed.promo = false;
         setGameBubble("Wow! A new Queen!");
         /* The move sound has just played: the fanfare waits until it has
            finished, then the voice follows once the fanfare has finished. */
